@@ -291,7 +291,7 @@ public sealed class WilliamsR : IIndicator
         _period = period;
     }
 
-    public decimal? Update(decimal close) => Update(close, close, close);
+    public decimal? Update(decimal value) => Update(value, value, value);
 
     public decimal? Update(decimal close, decimal high, decimal low)
     {
