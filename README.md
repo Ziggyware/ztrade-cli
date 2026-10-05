@@ -20,6 +20,10 @@ dotnet run --project tests/ZTrade.Tests                       # run tests
 dotnet run --project src/ZTrade.Cli -- candles  --symbol BTCUSD --interval 1h --count 50 --out btc.csv
 dotnet run --project src/ZTrade.Cli -- patterns --csv btc.csv
 dotnet run --project src/ZTrade.Cli -- backtest --csv btc.csv --strategy sma --fast 10 --slow 30 --fee 0.002
+# Generate and open the interactive chart in your default browser
+dotnet run --project src/ZTrade.Cli -- chart --csv btc.csv --out btc.html --open --full
+# Paper trading is an alias for the fee-aware backtest (never sends exchange orders)
+dotnet run --project src/ZTrade.Cli -- paper --csv btc.csv --strategy rsi --cash 10000 --fee 0.001 --slippage 0.0005
 ```
 
 Exchange intervals: `1m 5m 15m 30m 1h 6h 1d`. The Gemini candles endpoint is public; `GEMINI_EXCHANGE_API_KEY` is not read.
