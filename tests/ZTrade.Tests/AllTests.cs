@@ -4,7 +4,9 @@ using ZTrade.Core.Indicators;
 using ZTrade.Core.Market;
 using ZTrade.Core.Patterns;
 using ZTrade.Exchanges;
+using ZTrade.Exchanges.GateIo;
 using ZTrade.Exchanges.Gemini;
+using ZTrade.Exchanges.Live;
 using ZTrade.Trading;
 using static ZTrade.Tests.T;
 
@@ -43,6 +45,155 @@ internal static class AllTests
 
             Check.True(!CandleIntervalExtensions.TryParse("2h", out _));
         }));
+        yield return ("Live candle aggregator: incremental OHLCV, rollovers, late-print rejection and bounded history", () => Sync(() =>
+        {
+            const long epoch = 1_700_000_000;
+            var aligned = epoch - epoch % 60;
+            var seed = new[] { C(aligned - 120, 100, 101, 99, 100), C(aligned - 60, 100, 101, 99, 100) };
+            var aggregator = new RealtimeCandleAggregator(CandleInterval.Minute1, seed, capacity: 3);
+            var first = aggregator.Update(new MarketTrade((aligned + 1) * 1000, 101, 1, TradeSide.Buy, "a"));
+            Check.True(first.Accepted && first.StartedNewBar && first.ClosedCandle is null);
+            aggregator.Update(new MarketTrade((aligned + 10) * 1000, 102, 2, TradeSide.Sell, "b"));
+            aggregator.Update(new MarketTrade((aligned + 20) * 1000, 99, 3, TradeSide.Unknown, "c"));
+            Check.True(!aggregator.Update(new MarketTrade((aligned + 15) * 1000, 100, 1, TradeSide.Buy)).Accepted, "out-of-order print cannot replace the active close");
+            var next = aggregator.Update(new MarketTrade((aligned + 60) * 1000, 103, 4, TradeSide.Buy, "d"));
+            Check.True(next.Accepted && next.StartedNewBar && next.ClosedCandle is not null);
+            Check.Eq(101m, next.ClosedCandle!.Value.Open);
+            Check.Eq(102m, next.ClosedCandle.Value.High);
+            Check.Eq(99m, next.ClosedCandle.Value.Low);
+            Check.Eq(99m, next.ClosedCandle.Value.Close);
+            Check.Eq(6m, next.ClosedCandle.Value.Volume);
+            Check.Eq(103m, next.ActiveCandle!.Value.Open);
+            Check.Eq(4m, aggregator.ActiveBuyVolume);
+            Check.Eq(0m, aggregator.ActiveSellVolume);
+            Check.True(!aggregator.Update(new MarketTrade((aligned + 59) * 1000, 100, 1, TradeSide.Buy)).Accepted, "late trade cannot rewrite a closed bar");
+            Check.Eq(3, aggregator.Snapshot().Count);
+            var gapAggregator = new RealtimeCandleAggregator(CandleInterval.Minute1);
+            gapAggregator.Update(new MarketTrade((aligned + 1) * 1000, 100, 1, TradeSide.Buy));
+            var afterGap = gapAggregator.Update(new MarketTrade((aligned + 181) * 1000, 101, 1, TradeSide.Buy));
+            Check.True(afterGap.GapDetected && afterGap.ClosedCandle is null, "missing intervals do not become synthetic signals");
+            Check.Eq(2, gapAggregator.Snapshot().Count);
+
+            var historyGap = new RealtimeCandleAggregator(CandleInterval.Minute1,
+                new[] { C(aligned - 120, 100, 101, 99, 100) });
+            var afterHistoryGap = historyGap.Update(new MarketTrade((aligned + 1) * 1000, 101, 1, TradeSide.Buy));
+            Check.True(afterHistoryGap.GapDetected, "bootstrap-to-live gaps are counted too");
+        }));
+        yield return ("Gemini WebSocket parser: aggressor side and maintained best bid/ask", () => Sync(() =>
+        {
+            var parser = new GeminiLiveStreamParser();
+            var parsed = parser.Parse(System.Text.Encoding.UTF8.GetBytes("""
+                {"type":"update","timestampms":1700000000000,"events":[
+                  {"type":"change","side":"bid","price":"99.5","remaining":"2"},
+                  {"type":"change","side":"ask","price":"100.5","remaining":"3"},
+                  {"type":"trade","tid":42,"price":"100","amount":"0.25","makerSide":"ask"}]}
+                """));
+            Check.Eq(3, parsed.Count);
+            var trade = (LiveFeedTrade)parsed[2];
+            Check.Eq(TradeSide.Buy, trade.Trade.Side);
+            Check.Eq(0.25m, trade.Trade.Quantity);
+            var quote = (LiveFeedQuote)parsed[1];
+            Check.Eq(99.5m, quote.Quote.Bid!.Value);
+            Check.Eq(100.5m, quote.Quote.Ask!.Value);
+            Check.Eq(2m, quote.Quote.BidSize!.Value);
+            Check.Eq(3m, quote.Quote.AskSize!.Value);
+        }));
+        yield return ("Gate.io WebSocket parser: public trade and ticker fields", () => Sync(() =>
+        {
+            var trades = GateIoLiveStreamParser.Parse(System.Text.Encoding.UTF8.GetBytes("""
+                {"channel":"spot.trades","event":"update","time":1700000000,"result":
+                  {"id":9,"create_time_ms":"1700000000123.4578","currency_pair":"BTC_USDT","side":"sell","amount":"0.5","price":"42000"}}
+                """), "BTC_USDT");
+            Check.Eq(1, trades.Count);
+            var trade = ((LiveFeedTrade)trades[0]).Trade;
+            Check.Eq(TradeSide.Sell, trade.Side);
+            Check.Eq(1_700_000_000_123L, trade.TimestampMilliseconds);
+            Check.Eq(42_000m, trade.Price);
+
+            var batchedTrades = GateIoLiveStreamParser.Parse(System.Text.Encoding.UTF8.GetBytes("""
+                {"channel":"spot.trades","event":"update","result":[
+                  {"id":"10","create_time":1700000001,"currency_pair":"BTC_USDT","side":"buy","amount":"0.1","price":"42001"}]}
+                """), "BTC_USDT");
+            Check.Eq(1, batchedTrades.Count);
+            Check.Eq(1_700_000_001_000L, ((LiveFeedTrade)batchedTrades[0]).Trade.TimestampMilliseconds);
+
+            var quotes = GateIoLiveStreamParser.Parse(System.Text.Encoding.UTF8.GetBytes("""
+                {"channel":"spot.tickers","event":"update","time":1700000000,"result":
+                  {"currency_pair":"BTC_USDT","highest_bid":"41999","lowest_ask":"42001","change_percentage":"1.25","base_volume":"12.5"}}
+                """), "BTC_USDT");
+            var quote = ((LiveFeedQuote)quotes.Single()).Quote;
+            Check.Eq(41_999m, quote.Bid!.Value);
+            Check.Eq(42_001m, quote.Ask!.Value);
+            Check.Eq(1.25m, quote.Change24hPercent!.Value);
+            Check.Eq(12.5m, quote.Volume24h!.Value);
+        }));
+        yield return ("Gate.io candle client: maps native intervals and rejects unsupported widths", async () =>
+        {
+            const string rows = "[[1700000000,\"1000\",\"10\",\"11\",\"9\",\"10\",\"0.5\",\"true\"]]";
+            var handler = new FakeHandler((_, _) => FakeHandler.Json(HttpStatusCode.OK, rows));
+            using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.gateio.ws/api/v4/") };
+            var client = new GateIoMarketDataClient(http, new GateIoClientOptions { MaxAttempts = 1 });
+            var candles = await client.GetRecentCandlesAsync("BTC_USDT", CandleInterval.Minute1, 1);
+            Check.Eq(1, candles.Count);
+            Check.Eq(0.5m, candles[0].Volume, "seed candles use base volume, matching live trade quantities");
+            Check.True(handler.Requests[0].Query.Contains("interval=1m", StringComparison.Ordinal));
+            var hourly = await client.GetRecentCandlesAsync("BTC_USDT", CandleInterval.Hour1, 1);
+            Check.Eq(1, hourly.Count);
+            Check.True(handler.Requests[1].Query.Contains("interval=1h", StringComparison.Ordinal), "CLI 1hr maps to Gate.io's native 1h");
+            await Check.ThrowsAsync<NotSupportedException>(() => client.GetRecentCandlesAsync("BTC_USDT", CandleInterval.Hour6, 1));
+            Check.Eq(2, handler.Requests.Count, "unsupported intervals do not issue a request");
+        });
+        yield return ("Gate.io REST candles: excludes the forming bar and preserves base volume", async () =>
+        {
+            const long nowSeconds = 1_700_000_000;
+            var currentStart = nowSeconds - nowSeconds % 60;
+            var previousStart = currentStart - 60;
+            var rows = $"[[{previousStart},\"1000\",\"10\",\"11\",\"9\",\"10\",\"0.5\"],[{currentStart},\"2000\",\"12\",\"13\",\"11\",\"11\",\"0.75\"]]";
+            var clock = new FixedTimeProvider(DateTimeOffset.FromUnixTimeSeconds(currentStart + 10));
+
+            var closedHandler = new FakeHandler((_, _) => FakeHandler.Json(HttpStatusCode.OK, rows));
+            using var closedHttp = new HttpClient(closedHandler) { BaseAddress = new Uri("https://api.gateio.ws/api/v4/") };
+            var closedClient = new GateIoMarketDataClient(closedHttp,
+                new GateIoClientOptions { MaxAttempts = 1 }, clock);
+            var closed = await closedClient.GetRecentCandlesAsync("BTC_USDT", CandleInterval.Minute1, 1);
+            Check.Eq(1, closed.Count);
+            Check.Eq(previousStart, closed[0].Timestamp);
+            Check.Eq(0.5m, closed[0].Volume);
+
+            var allHandler = new FakeHandler((_, _) => FakeHandler.Json(HttpStatusCode.OK, rows));
+            using var allHttp = new HttpClient(allHandler) { BaseAddress = new Uri("https://api.gateio.ws/api/v4/") };
+            var allClient = new GateIoMarketDataClient(allHttp,
+                new GateIoClientOptions { MaxAttempts = 1, IncludeUnclosedCandles = true }, clock);
+            var all = await allClient.GetRecentCandlesAsync("BTC_USDT", CandleInterval.Minute1, 2);
+            Check.Eq(2, all.Count);
+            Check.Eq(currentStart, all[^1].Timestamp);
+            Check.Eq(0.75m, all[^1].Volume);
+        });
+        yield return ("Live dashboard state: deduplicates prints and coalesces slow clients", async () =>
+        {
+            var clock = new FixedTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(1_700_000_000_000));
+            var historicalState = new LiveMarketState("Gemini", "BTCUSD", CandleInterval.Minute1,
+                new[] { C(1_700_000_000, 100, 101, 99, 100) }, timeProvider: clock);
+            var historicalSnapshot = historicalState.Snapshot();
+            Check.True(historicalSnapshot.CurrentCandle is null, "a REST seed is history, not a forming live candle");
+            Check.True(historicalSnapshot.LastPrice is null, "historical close is not presented as a live exchange print");
+
+            var state = new LiveMarketState("Gemini", "BTCUSD", CandleInterval.Minute1, timeProvider: clock);
+            using var subscription = state.Subscribe();
+            var first = state.ApplyTrade(new MarketTrade(1_700_000_000_000, 100, 2, TradeSide.Buy, "one"));
+            Check.True(first.Accepted);
+            Check.True(!state.ApplyTrade(new MarketTrade(1_700_000_000_001, 101, 3, TradeSide.Sell, "one")).Accepted);
+            state.ApplyQuote(new MarketQuote(1_700_000_000_002, 99, 4, 101, 2));
+            state.Publish();
+            state.ApplyTrade(new MarketTrade(1_700_000_000_003, 102, 1, TradeSide.Sell, "two"));
+            state.Publish();
+            var update = await subscription.Reader.ReadAsync();
+            Check.Eq(2L, update.Sequence);
+            Check.Eq(102m, update.LastPrice!.Value);
+            Check.Eq(2L, update.TotalTrades);
+            Check.Eq(200m, update.SpreadBasisPoints!.Value); // 2 / mid(100) * 10,000
+            Check.True(!subscription.Reader.TryRead(out _), "bounded stream delivered only the newest update");
+        });
 
         // ---- Indicators -------------------------------------------------
         yield return ("SMA: values and warm-up", () => Sync(() =>
@@ -165,6 +316,41 @@ internal static class AllTests
             Check.True(b.Buy(2, 100m) is null);
             Check.Eq(99m, b.Sell(3, 100m)!.Price);
             Check.True(b.Sell(4, 100m) is null);
+        }));
+        yield return ("LivePaperEngine: closed-bar signals fill on the next live bar only", () => Sync(() =>
+        {
+            var engine = new LivePaperEngine(
+                new ScriptedStrategy(new Dictionary<int, Signal> { [0] = Signal.Buy, [1] = Signal.Sell }),
+                initialCash: 1000m,
+                feeRate: 0m,
+                slippageRate: 0m);
+            Check.Eq(Signal.Buy, engine.OnBarClosed(C(60, 10, 11, 9, 10)));
+            var entry = engine.OnBarOpened(120, 10m)!;
+            Check.Eq(Side.Buy, entry.Side);
+            Check.Eq(100m, entry.Quantity);
+            Check.Eq(Signal.Sell, engine.OnBarClosed(C(120, 10, 12, 10, 12)));
+            var exit = engine.OnBarOpened(180, 12m)!;
+            Check.Eq(Side.Sell, exit.Side);
+            var snapshot = engine.Snapshot();
+            Check.Eq(1200m, snapshot.Equity);
+            Check.Eq(0.2m, snapshot.ReturnFraction);
+            Check.Eq(1, snapshot.TradeCount);
+            Check.Eq(1, snapshot.WinCount);
+
+            var reconnectGuard = new LivePaperEngine(
+                new ScriptedStrategy(new Dictionary<int, Signal> { [0] = Signal.Buy }), 1000m, 0m, 0m);
+            reconnectGuard.SuppressNextClosedSignal();
+            Check.Eq(Signal.Hold, reconnectGuard.OnBarClosed(C(60, 10, 11, 9, 10)));
+            Check.True(reconnectGuard.OnBarOpened(120, 10m) is null, "partial candle cannot trigger a simulated fill");
+
+            var reconnectWithActiveBar = new LivePaperEngine(
+                new ScriptedStrategy(new Dictionary<int, Signal> { [0] = Signal.Buy, [1] = Signal.Buy, [2] = Signal.Buy }),
+                1000m, 0m, 0m);
+            reconnectWithActiveBar.SuppressNextClosedSignals(2);
+            Check.Eq(Signal.Hold, reconnectWithActiveBar.OnBarClosed(C(60, 10, 11, 9, 10)));
+            Check.Eq(Signal.Hold, reconnectWithActiveBar.OnBarClosed(C(120, 10, 11, 9, 10)));
+            Check.Eq(Signal.Buy, reconnectWithActiveBar.OnBarClosed(C(180, 10, 11, 9, 10)));
+            Check.True(reconnectWithActiveBar.OnBarOpened(240, 10m) is not null);
         }));
         yield return ("Backtest: executes at NEXT open, never same bar; last-bar signal is dropped", () => Sync(() =>
         {

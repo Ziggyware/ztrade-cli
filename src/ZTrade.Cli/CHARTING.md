@@ -1,6 +1,6 @@
 # Interactive charting
 
-`ztrade chart` writes a self-contained HTML chart; it does not require a web server, browser-side network access, or a third-party charting CDN.
+`ztrade chart` writes a self-contained historical HTML chart; it does not require a web server, browser-side network access, or a third-party charting CDN. For a pushed, real-time public market-data window with optional paper simulation, use `ztrade live --open` (documented in the repository README).
 
 ```sh
 ztrade chart --symbol BTCUSD --interval 1hr --count 1000 --out btcusd.html

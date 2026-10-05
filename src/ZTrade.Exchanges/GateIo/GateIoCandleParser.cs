@@ -6,7 +6,7 @@ namespace ZTrade.Exchanges.GateIo;
 
 /// <summary>
 /// Parses the Gate.io v4 <c>/spot/candlesticks</c> payload: an array of string arrays
-/// <c>[unix_ts, quote_volume, close, high, low, open, base_volume, window_closed]</c>.
+/// <c>[unix_ts, quote_volume, close, high, low, open, base_volume, optional_window_closed]</c>.
 /// </summary>
 public static class GateIoCandleParser
 {
@@ -53,7 +53,8 @@ public static class GateIoCandleParser
                         high: Dec(row[3]),
                         low: Dec(row[4]),
                         close: Dec(row[2]),
-                        volume: Dec(row[1])));
+                        // Gate.io field 1 is quote volume; field 6 is base amount and matches live trade size.
+                        volume: Dec(row.GetArrayLength() >= 7 ? row[6] : row[1])));
                 }
                 catch (Exception ex) when (ex is FormatException or OverflowException or ArgumentException)
                 {

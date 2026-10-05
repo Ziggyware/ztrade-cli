@@ -1,4 +1,5 @@
 using ZTrade.Cli;
+using ZTrade.Exchanges.GateIo;
 using ZTrade.Exchanges.Gemini;
 
 using var cts = new CancellationTokenSource();
@@ -17,7 +18,16 @@ using var http = new HttpClient(handler, disposeHandler: false)
 http.DefaultRequestHeaders.UserAgent.ParseAdd("ztrade-cli/1.0");
 http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
 
-var commands = new Commands(new GeminiMarketDataClient(http), Console.Out);
+using var gateHandler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) };
+using var gateHttp = new HttpClient(gateHandler, disposeHandler: false)
+{
+    BaseAddress = new Uri("https://api.gateio.ws/api/v4/"),
+    Timeout = TimeSpan.FromSeconds(30),
+};
+gateHttp.DefaultRequestHeaders.UserAgent.ParseAdd("ztrade-cli/1.0");
+gateHttp.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+
+var commands = new Commands(new GeminiMarketDataClient(http), Console.Out, new GateIoMarketDataClient(gateHttp));
 
 try
 {
@@ -43,7 +53,7 @@ catch (OperationCanceledException)
     return 130;
 }
 catch (Exception ex) when (ex is ZTrade.Exchanges.MarketDataException or IOException or FormatException
-                              or ArgumentException or NotSupportedException)
+                              or ArgumentException or NotSupportedException or System.Net.HttpListenerException)
 {
     await Console.Error.WriteLineAsync($"error: {ex.Message}");
     return 1;
