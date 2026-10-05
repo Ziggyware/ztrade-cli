@@ -25,10 +25,10 @@ public sealed class Commands
         ztrade candles  --symbol BTCUSD --interval 1hr [--count 50] [--out file.csv]
         ztrade patterns (--symbol BTCUSD --interval 1hr [--count 300] | --csv file.csv)
         ztrade chart    (--symbol BTCUSD --interval 1hr [--count 1000] | --csv file.csv)
-                        [--out chart.html] [--full] [--client] [--full-client] [--app]
+                        [--out chart.html] [--open] [--full] [--client] [--full-client] [--app]
                         (aliases: --full, --client, --full-client, --full-app, --app, --show-full-client)
                         full client app = interactive chart with 60 ultra indicative studies
-        ztrade backtest (--symbol BTCUSD --interval 1hr [--count 1000] | --csv file.csv)
+        ztrade backtest|paper (--symbol BTCUSD --interval 1hr [--count 1000] | --csv file.csv)
                         [--strategy sma|rsi] [--fast 10] [--slow 30]
                         [--period 14] [--oversold 30] [--overbought 70]
                         [--cash 10000] [--fee 0.002] [--slippage 0]
@@ -47,7 +47,8 @@ public sealed class Commands
             case "candles": await CandlesAsync(cl, ct); break;
             case "patterns": await PatternsAsync(cl, ct); break;
             case "chart": await ChartAsync(cl, ct); break;
-            case "backtest": await BacktestAsync(cl, ct); break;
+            case "backtest":
+            case "paper": await BacktestAsync(cl, ct); break;
             default: throw new UsageException(cl.Command is null ? "No command given." : $"Unknown command '{cl.Command}'.");
         }
     }
@@ -124,6 +125,7 @@ public sealed class Commands
         var fullApp = cl.Get("full-app");
         var app = cl.Get("app");
         var showFullClient = cl.Get("show-full-client");
+        var open = cl.Get("open") ?? cl.Get("show");
         // also support --full-client-app alias
         var fullClientApp = cl.Get("full-client-app");
         bool fullClientEnabled = full != null || client != null || fullClient != null || fullApp != null || app != null || showFullClient != null || fullClientApp != null;
@@ -144,6 +146,24 @@ public sealed class Commands
             .ToArray();
 
         await ChartExporter.WriteAsync(outputPath, candles, patterns, symbol, interval, fullClientEnabled, ct);
+        if (open is not null)
+        {
+            // Keep chart generation deterministic and still make `chart --open` a real desktop experience.
+            var absolutePath = Path.GetFullPath(outputPath);
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = absolutePath,
+                    UseShellExecute = true,
+                });
+                _out.WriteLine($"Opened chart window for {absolutePath}");
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                _out.WriteLine($"Chart saved, but the system browser could not be opened: {ex.Message}");
+            }
+        }
         _out.WriteLine($"Wrote an interactive chart with {candles.Count} candles and {patterns.Length} pattern matches to {outputPath}");
         _out.WriteLine(fullClientEnabled
             ? "Full client app enabled — 60 ultra indicative studies rendered. Chart studies use OHLCV-derived estimates; bid/ask-resolved trade flow and order-book depth are not present in candle data."
@@ -172,6 +192,7 @@ public sealed class Commands
         _out.WriteLine($"Return          {Pct(r.ReturnFraction)}   (buy & hold: {Pct(r.BuyAndHoldReturnFraction)})");
         _out.WriteLine($"Max drawdown    {Pct(r.MaxDrawdownFraction)}");
         _out.WriteLine($"Trades          {r.TradeCount}   wins: {r.WinCount}   win rate: {(r.WinRate is { } w ? Pct(w) : "n/a")}");
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Fees paid       {r.Fills.Sum(f => f.Fee):N8} ({r.Fills.Count} fills; included in equity)"));
         _out.WriteLine($"Open position   {(r.EndedInPosition ? "yes (marked to market)" : "no")}");
         _out.WriteLine("Simulation only: fees/slippage are assumptions; no exchange orders were placed.");
     }
