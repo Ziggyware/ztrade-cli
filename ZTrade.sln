@@ -1,0 +1,57 @@
+\xef\xbb\xbf
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{FB6F3B73-A3DC-4138-B88D-B3E6917B5789}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZTrade.Core", "src\ZTrade.Core\ZTrade.Core.csproj", "{441C7655-6647-472D-B9DE-33118AC87B83}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZTrade.Exchanges", "src\ZTrade.Exchanges\ZTrade.Exchanges.csproj", "{4B7DD774-A266-46FE-8274-36A81163182D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZTrade.Trading", "src\ZTrade.Trading\ZTrade.Trading.csproj", "{E58CD307-1458-4BF1-A770-8C89F7B71E3D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZTrade.Cli", "src\ZTrade.Cli\ZTrade.Cli.csproj", "{6A6D9250-A9EA-4B26-9759-F05D2302C377}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{7C9298F6-6E8E-49FB-A851-09E081C4A56B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZTrade.Tests", "tests\ZTrade.Tests\ZTrade.Tests.csproj", "{2481C6EE-55A4-4007-9839-94CE24EA6129}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{441C7655-6647-472D-B9DE-33118AC87B83}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{441C7655-6647-472D-B9DE-33118AC87B83}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{441C7655-6647-472D-B9DE-33118AC87B83}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{441C7655-6647-472D-B9DE-33118AC87B83}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4B7DD774-A266-46FE-8274-36A81163182D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4B7DD774-A266-46FE-8274-36A81163182D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4B7DD774-A266-46FE-8274-36A81163182D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4B7DD774-A266-46FE-8274-36A81163182D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E58CD307-1458-4BF1-A770-8C89F7B71E3D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E58CD307-1458-4BF1-A770-8C89F7B71E3D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E58CD307-1458-4BF1-A770-8C89F7B71E3D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E58CD307-1458-4BF1-A770-8C89F7B71E3D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6A6D9250-A9EA-4B26-9759-F05D2302C377}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6A6D9250-A9EA-4B26-9759-F05D2302C377}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6A6D9250-A9EA-4B26-9759-F05D2302C377}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6A6D9250-A9EA-4B26-9759-F05D2302C377}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2481C6EE-55A4-4007-9839-94CE24EA6129}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2481C6EE-55A4-4007-9839-94CE24EA6129}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2481C6EE-55A4-4007-9839-94CE24EA6129}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2481C6EE-55A4-4007-9839-94CE24EA6129}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{441C7655-6647-472D-B9DE-33118AC87B83} = {FB6F3B73-A3DC-4138-B88D-B3E6917B5789}
+		{4B7DD774-A266-46FE-8274-36A81163182D} = {FB6F3B73-A3DC-4138-B88D-B3E6917B5789}
+		{E58CD307-1458-4BF1-A770-8C89F7B71E3D} = {FB6F3B73-A3DC-4138-B88D-B3E6917B5789}
+		{6A6D9250-A9EA-4B26-9759-F05D2302C377} = {FB6F3B73-A3DC-4138-B88D-B3E6917B5789}
+		{2481C6EE-55A4-4007-9839-94CE24EA6129} = {7C9298F6-6E8E-49FB-A851-09E081C4A56B}
+	EndGlobalSection
+EndGlobal

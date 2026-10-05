@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ZTrade.Core\ZTrade.Core.csproj" />
+    <ProjectReference Include="..\..\src\ZTrade.Exchanges\ZTrade.Exchanges.csproj" />
+    <ProjectReference Include="..\..\src\ZTrade.Trading\ZTrade.Trading.csproj" />
+    <ProjectReference Include="..\..\src\ZTrade.Cli\ZTrade.Cli.csproj" />
+  </ItemGroup>
+</Project>

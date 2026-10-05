@@ -1,0 +1,4 @@
+[*.cs]
+# Test code intentionally constructs objects inside Throws<> lambdas and uses inline literal arrays.
+dotnet_diagnostic.CA1806.severity = none
+dotnet_diagnostic.CA1861.severity = none
