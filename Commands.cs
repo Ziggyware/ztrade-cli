@@ -22,12 +22,17 @@ public sealed class Commands
         ztrade — market data, pattern scanning and paper backtesting (no live trading).
 
         Usage:
-          ztrade candles  --symbol BTCUSD --interval 1hr [--count 50] [--out file.csv]
-          ztrade patterns (--symbol BTCUSD --interval 1hr [--count 300] | --csv file.csv)
-          ztrade backtest (--symbol BTCUSD --interval 1hr [--count 1000] | --csv file.csv)
-                          [--strategy sma|rsi] [--fast 10] [--slow 30]
-                          [--period 14] [--oversold 30] [--overbought 70]
-                          [--cash 10000] [--fee 0.002] [--slippage 0]
+        ztrade candles  --symbol BTCUSD --interval 1hr [--count 50] [--out file.csv]
+        ztrade patterns (--symbol BTCUSD --interval 1hr [--count 300] | --csv file.csv)
+        ztrade chart    (--symbol BTCUSD --interval 1hr [--count 1000] | --csv file.csv)
+                        [--out chart.html]
+        ztrade backtest (--symbol BTCUSD --interval 1hr [--count 1000] | --csv file.csv)
+                        [--strategy sma|rsi] [--fast 10] [--slow 30]
+                        [--period 14] [--oversold 30] [--overbought 70]
+                        [--cash 10000] [--fee 0.002] [--slippage 0]
+
+        The chart is a standalone, interactive HTML file. Its order-flow studies are
+        explicitly labeled OHLCV-derived estimates; candle data cannot reveal bid/ask flow.
 
         Exchange intervals: 1m 5m 15m 30m 1hr 6hr 1day
         """;
@@ -38,6 +43,7 @@ public sealed class Commands
         {
             case "candles": await CandlesAsync(cl, ct); break;
             case "patterns": await PatternsAsync(cl, ct); break;
+            case "chart": await ChartAsync(cl, ct); break;
             case "backtest": await BacktestAsync(cl, ct); break;
             default: throw new UsageException(cl.Command is null ? "No command given." : $"Unknown command '{cl.Command}'.");
         }
@@ -101,6 +107,28 @@ public sealed class Commands
         {
             _out.WriteLine($"  {group.Key,-28} {group.Count(),5}");
         }
+    }
+
+    private async Task ChartAsync(CommandLine cl, CancellationToken ct)
+    {
+        var outputPath = cl.Get("out") ?? "ztrade-chart.html";
+        var symbol = cl.Get("symbol") ?? "CSV data";
+        var interval = cl.Get("interval") ?? "file interval";
+        var candles = await LoadAsync(cl, 1000, ct);
+        cl.EnsureNoUnknownOptions();
+
+        if (candles.Count == 0)
+        {
+            throw new FormatException("No candles were available to chart.");
+        }
+
+        var patterns = PatternScanner.Scan(candles)
+            .Select(m => new ChartPattern(m.StartIndex, m.EndIndex, m.Type.ToString(), m.Bias.ToString()))
+            .ToArray();
+
+        await ChartExporter.WriteAsync(outputPath, candles, patterns, symbol, interval, ct);
+        _out.WriteLine($"Wrote an interactive chart with {candles.Count} candles and {patterns.Length} pattern matches to {outputPath}");
+        _out.WriteLine("Chart studies use OHLCV-derived estimates; bid/ask-resolved trade flow and order-book depth are not present in candle data.");
     }
 
     private async Task BacktestAsync(CommandLine cl, CancellationToken ct)
