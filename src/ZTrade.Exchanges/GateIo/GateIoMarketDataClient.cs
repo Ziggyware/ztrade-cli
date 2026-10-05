@@ -45,14 +45,19 @@ public sealed partial class GateIoMarketDataClient : IMarketDataClient
             throw new ArgumentOutOfRangeException(nameof(count), $"count must be within 1..{MaxHistoryPoints}.");
         }
 
-        var intervalText = interval.ToShortString();
+        var intervalText = ApiInterval(interval)
+            ?? throw new NotSupportedException($"Gate.io does not support interval {interval.ToShortString()} for spot candles.");
 
-        if (count <= MaxPointsPerRequest)
+        if (count < MaxPointsPerRequest)
         {
+            // REST may include the currently-forming bar but does not consistently return a close flag.
+            // Ask for one extra point so filtering it still leaves the requested number of closed bars.
+            var requestCount = Math.Min(count + 1, MaxPointsPerRequest);
             var body = await GetAsync(
-                $"spot/candlesticks?currency_pair={symbol}&interval={intervalText}&limit={count}",
+                $"spot/candlesticks?currency_pair={symbol}&interval={intervalText}&limit={requestCount}",
                 cancellationToken).ConfigureAwait(false);
-            return GateIoCandleParser.Parse(body, _options.IncludeUnclosedCandles);
+            var candles = GateIoCandleParser.Parse(body, _options.IncludeUnclosedCandles);
+            return SelectRecent(candles, interval, count);
         }
 
         if (interval == CandleInterval.Day30)
@@ -64,12 +69,13 @@ public sealed partial class GateIoMarketDataClient : IMarketDataClient
         var step = (long)interval.Seconds();
         var now = _time.GetUtcNow().ToUnixTimeSeconds();
         var alignedNow = now - now % step;
-        var firstStart = alignedNow - (count - 1) * step;
+        var latestStart = _options.IncludeUnclosedCandles ? alignedNow : alignedNow - step;
+        var firstStart = latestStart - (count - 1) * step;
 
         var byTimestamp = new SortedDictionary<long, Candle>();
-        for (var windowStart = firstStart; windowStart <= alignedNow; windowStart += MaxPointsPerRequest * step)
+        for (var windowStart = firstStart; windowStart <= latestStart; windowStart += MaxPointsPerRequest * step)
         {
-            var windowEnd = Math.Min(windowStart + (MaxPointsPerRequest - 1) * step, alignedNow);
+            var windowEnd = Math.Min(windowStart + (MaxPointsPerRequest - 1) * step, latestStart);
             var body = await GetAsync(
                 string.Create(CultureInfo.InvariantCulture,
                     $"spot/candlesticks?currency_pair={symbol}&interval={intervalText}&from={windowStart}&to={windowEnd}"),
@@ -81,8 +87,35 @@ public sealed partial class GateIoMarketDataClient : IMarketDataClient
             }
         }
 
-        return byTimestamp.Values.ToArray();
+        return SelectRecent(byTimestamp.Values, interval, count);
     }
+
+    private IReadOnlyList<Candle> SelectRecent(IEnumerable<Candle> candles, CandleInterval interval, int count)
+    {
+        if (!_options.IncludeUnclosedCandles)
+        {
+            // Gate.io's REST candles can omit the window-closed marker, so also filter by interval time.
+            var latestClosedStart = _time.GetUtcNow().ToUnixTimeSeconds() - interval.Seconds();
+            candles = candles.Where(candle => candle.Timestamp <= latestClosedStart);
+        }
+
+        return candles.TakeLast(count).ToArray();
+    }
+
+    internal static string? ApiInterval(CandleInterval interval) => interval switch
+    {
+        CandleInterval.Second10 => "10s",
+        CandleInterval.Minute1 => "1m",
+        CandleInterval.Minute5 => "5m",
+        CandleInterval.Minute15 => "15m",
+        CandleInterval.Minute30 => "30m",
+        CandleInterval.Hour1 => "1h",
+        CandleInterval.Hour4 => "4h",
+        CandleInterval.Hour8 => "8h",
+        CandleInterval.Day1 => "1d",
+        CandleInterval.Day7 => "7d",
+        _ => null,
+    };
 
     internal static string NormalizeSymbol(string symbol)
     {

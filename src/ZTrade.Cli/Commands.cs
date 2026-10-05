@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Globalization;
 using ZTrade.Core.Market;
 using ZTrade.Core.Patterns;
 using ZTrade.Exchanges;
 using ZTrade.Exchanges.Gemini;
+using ZTrade.Exchanges.Live;
 using ZTrade.Trading;
 
 namespace ZTrade.Cli;
@@ -10,40 +12,47 @@ namespace ZTrade.Cli;
 public sealed class Commands
 {
     private readonly IMarketDataClient _market;
+    private readonly IMarketDataClient? _gateMarket;
     private readonly TextWriter _out;
 
-    public Commands(IMarketDataClient market, TextWriter output)
+    public Commands(IMarketDataClient market, TextWriter output, IMarketDataClient? gateMarket = null)
     {
-        _market = market;
-        _out = output;
+        _market = market ?? throw new ArgumentNullException(nameof(market));
+        _out = output ?? throw new ArgumentNullException(nameof(output));
+        _gateMarket = gateMarket;
     }
 
     public const string Usage = """
-        ztrade — market data, pattern scanning and paper backtesting (no live trading).
+        ztrade — live public market dashboard, analysis, and paper trading.
 
         Usage:
+        ztrade live     [--exchange gemini|gateio] [--symbol BTCUSD|BTC_USDT] [--interval 1m]
+                        [--count 300] [--max-bars 2000] [--bind 127.0.0.1] [--port 5175] [--open]
+                        [--paper sma|rsi] [--fast 10] [--slow 30] [--period 14]
+                        [--oversold 30] [--overbought 70] [--cash 10000] [--fee 0.002] [--slippage 0]
         ztrade candles  --symbol BTCUSD --interval 1hr [--count 50] [--out file.csv]
         ztrade patterns (--symbol BTCUSD --interval 1hr [--count 300] | --csv file.csv)
         ztrade chart    (--symbol BTCUSD --interval 1hr [--count 1000] | --csv file.csv)
                         [--out chart.html] [--open] [--full] [--client] [--full-client] [--app]
                         (aliases: --full, --client, --full-client, --full-app, --app, --show-full-client)
-                        full client app = interactive chart with 60 ultra indicative studies
         ztrade backtest|paper (--symbol BTCUSD --interval 1hr [--count 1000] | --csv file.csv)
                         [--strategy sma|rsi] [--fast 10] [--slow 30]
                         [--period 14] [--oversold 30] [--overbought 70]
                         [--cash 10000] [--fee 0.002] [--slippage 0]
 
-        The chart is a standalone, interactive HTML file. Its order-flow studies are
-        explicitly labeled OHLCV-derived estimates; candle data cannot reveal bid/ask flow.
-        Use --full (or --client / --full-client / --app) to enable the full client app view.
+        `live` opens a local browser dashboard and streams public trades/quotes over WebSockets.
+        Live paper mode uses real-time data but never sends exchange orders or reads API keys.
+        The existing standalone chart supports 60 descriptive OHLCV studies; candle-only data
+        cannot reveal aggressor-side flow or order-book depth.
 
-        Exchange intervals: 1m 5m 15m 30m 1hr 6hr 1day
+        Exchange candle intervals: 1m 5m 15m 30m 1hr 6hr 1day. Live candles are aggregated from trade prints.
         """;
 
     public async Task RunAsync(CommandLine cl, CancellationToken ct)
     {
         switch (cl.Command?.ToLowerInvariant())
         {
+            case "live": await LiveAsync(cl, ct); break;
             case "candles": await CandlesAsync(cl, ct); break;
             case "patterns": await PatternsAsync(cl, ct); break;
             case "chart": await ChartAsync(cl, ct); break;
@@ -51,6 +60,136 @@ public sealed class Commands
             case "paper": await BacktestAsync(cl, ct); break;
             default: throw new UsageException(cl.Command is null ? "No command given." : $"Unknown command '{cl.Command}'.");
         }
+    }
+
+    private async Task LiveAsync(CommandLine cl, CancellationToken ct)
+    {
+        var exchange = (cl.Get("exchange") ?? "gemini").Trim().ToLowerInvariant();
+        var symbol = cl.Get("symbol") ?? (exchange == "gateio" ? "BTC_USDT" : "BTCUSD");
+        var intervalText = cl.Get("interval") ?? "1m";
+        if (!CandleIntervalExtensions.TryParse(intervalText, out var interval))
+        {
+            throw new UsageException($"Unknown live interval '{intervalText}'.");
+        }
+
+        var count = cl.GetInt("count", 300);
+        var bind = cl.Get("bind") ?? "127.0.0.1";
+        if (string.Equals(bind, "localhost", StringComparison.OrdinalIgnoreCase)) bind = "127.0.0.1";
+        var port = cl.GetInt("port", 5175);
+        var maxBars = cl.GetInt("max-bars", 2000);
+        var open = cl.Get("open") is not null;
+        var paperText = cl.Get("paper");
+        var paperMode = paperText is null ? "off" :
+            string.Equals(paperText, "true", StringComparison.OrdinalIgnoreCase) ? "sma" : paperText.Trim().ToLowerInvariant();
+
+        IMarketDataClient market;
+        ILiveMarketFeed feed;
+        switch (exchange)
+        {
+            case "gemini":
+                market = _market;
+                feed = new GeminiLiveFeed();
+                break;
+            case "gateio":
+                market = _gateMarket ?? throw new UsageException("Gate.io REST bootstrap is unavailable in this composition root.");
+                feed = new GateIoLiveFeed();
+                break;
+            default:
+                throw new UsageException($"Unknown exchange '{exchange}' (use gemini or gateio).");
+        }
+
+        symbol = symbol.Trim().ToUpperInvariant();
+        if (maxBars is < 2 or > 10_000) throw new UsageException("--max-bars must be within 2..10000.");
+        if (count < 1) throw new UsageException("--count must be >= 1.");
+        if (port is < 1 or > 65_535) throw new UsageException("--port must be within 1..65535.");
+
+        IStrategy? strategy = null;
+        decimal cash = 10_000m;
+        decimal fee = 0.002m;
+        decimal slippage = 0m;
+        if (paperMode == "sma")
+        {
+            var fast = cl.GetInt("fast", 10);
+            var slow = cl.GetInt("slow", 30);
+            if (fast < 1 || slow <= fast) throw new UsageException("SMA paper mode requires 1 <= --fast < --slow.");
+            strategy = new SmaCrossStrategy(fast, slow);
+        }
+        else if (paperMode == "rsi")
+        {
+            var period = cl.GetInt("period", 14);
+            var oversold = cl.GetDecimal("oversold", 30m);
+            var overbought = cl.GetDecimal("overbought", 70m);
+            if (period < 1 || oversold <= 0m || overbought >= 100m || oversold >= overbought)
+            {
+                throw new UsageException("RSI paper mode requires --period >= 1 and 0 < --oversold < --overbought < 100.");
+            }
+
+            strategy = new RsiReversionStrategy(period, oversold, overbought);
+        }
+        else if (paperMode != "off")
+        {
+            throw new UsageException("--paper must be off, sma, or rsi (a bare --paper defaults to sma).");
+        }
+
+        if (strategy is not null)
+        {
+            cash = cl.GetDecimal("cash", cash);
+            fee = cl.GetDecimal("fee", fee);
+            slippage = cl.GetDecimal("slippage", slippage);
+            if (cash <= 0m || fee is < 0m or >= 1m || slippage is < 0m or >= 1m)
+            {
+                throw new UsageException("Paper settings require --cash > 0 and fee/slippage fractions in [0, 1).");
+            }
+        }
+
+        cl.EnsureNoUnknownOptions();
+        IReadOnlyList<Candle> seed;
+        try
+        {
+            seed = await market.GetRecentCandlesAsync(symbol, interval, count, ct).ConfigureAwait(false);
+        }
+        catch (NotSupportedException ex)
+        {
+            seed = Array.Empty<Candle>();
+            _out.WriteLine($"History bootstrap skipped: {ex.Message} Live bars will start from the first trade.");
+        }
+        catch (MarketDataException ex) when (ex.StatusCode is null or 429 or >= 500)
+        {
+            seed = Array.Empty<Candle>();
+            _out.WriteLine($"History bootstrap unavailable: {ex.Message} Live bars will start from the first trade.");
+        }
+
+        CandleSeries.EnsureAscending(seed);
+        var state = new LiveMarketState(feed.ExchangeName, symbol, interval, seed, maxBars);
+        var paper = strategy is null ? null : new LivePaperEngine(strategy, cash, fee, slippage, seed);
+
+        await using var dashboard = new LiveDashboardServer(state, bind, port);
+        dashboard.Start();
+        _out.WriteLine($"Live read-only {feed.ExchangeName} market desk for {symbol} · {interval.ToShortString()}");
+        _out.WriteLine($"Dashboard: {dashboard.LocalUri}");
+        _out.WriteLine($"Loaded {seed.Count} closed candles; chart retains at most {maxBars:N0} bars.");
+        _out.WriteLine(strategy is null
+            ? "Paper simulation is off. No exchange order endpoints or keys are used."
+            : $"Paper-only {strategy.Name} · cash {cash} · fee {fee:P3} · slippage {slippage:P3}. No live orders are possible.");
+        if (bind is "0.0.0.0" or "::")
+        {
+            _out.WriteLine("Warning: dashboard access is unauthenticated. Bind to 127.0.0.1 unless you intentionally need LAN access.");
+        }
+
+        if (open)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(dashboard.LocalUri.ToString()) { UseShellExecute = true });
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                _out.WriteLine($"Browser could not be opened automatically: {ex.Message}");
+            }
+        }
+
+        _out.WriteLine("Press Ctrl+C to stop the dashboard and WebSocket feed.");
+        await new LiveMarketSession(feed, state, paper).RunAsync(ct).ConfigureAwait(false);
     }
 
     private async Task<IReadOnlyList<Candle>> LoadAsync(CommandLine cl, int defaultCount, CancellationToken ct)
