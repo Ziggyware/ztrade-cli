@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ztrade</AssemblyName>
+    <RootNamespace>ZTrade.Cli</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZTrade.Core\ZTrade.Core.csproj" />
+    <ProjectReference Include="..\ZTrade.Exchanges\ZTrade.Exchanges.csproj" />
+    <ProjectReference Include="..\ZTrade.Trading\ZTrade.Trading.csproj" />
+  </ItemGroup>
+</Project>
+
